@@ -1,0 +1,7 @@
+artifacts/
+bundle-notes.json
+.env
+.env.*
+node_modules/
+public/aleph.json
+xdr/alerts.log
