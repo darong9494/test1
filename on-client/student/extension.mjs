@@ -57,11 +57,11 @@ export function createStudentView() {
       // appId는 요청 대상이며, 판정·이유·시각은 검증된 응답 data에서 받습니다.
       line('업무 앱: ' + text(appId));
       if (status === 'idle') {
-        line('요청 전: 아직 접근 판정을 요청하지 않았습니다.');
+        line('요청 전: 앱을 골라 접속을 요청하세요.');
         return root;
       }
       if (status === 'loading') {
-        line('요청 중: 접근 판정을 기다리고 있습니다.');
+        line('요청 중: 접근 판정 확인 중입니다.');
         return root;
       }
       if (status === 'error') {
@@ -79,9 +79,12 @@ export function createStudentView() {
         challenge: '추가 인증 또는 확인 필요',
         unknown: '판정 확인 불가',
       };
-      const code = text(data?.decision, 'unknown');
-      const label = Object.hasOwn(decisions, code) ? decisions[code] : decisions.unknown;
-      line('판정 수신: ' + label + ' (' + code + ')');
+      const receivedCode = text(data?.decision, 'unknown');
+      const code = Object.hasOwn(decisions, receivedCode) ? receivedCode : 'unknown';
+      line('판정 수신: ' + decisions[code] + ' (' + code + ')');
+      if (receivedCode !== code) line('수신 판정 코드: ' + receivedCode);
+      if (code === 'allow') line('정책상 접근 허용이며, 실제 앱 접속 성공을 보장하지 않습니다.');
+      if (code === 'challenge') line('추가 인증 또는 확인이 필요하며, 이 앱이 확인 절차를 대신 수행하지 않습니다.');
       line('판정 이유: ' + text(data?.reason, '이유 정보 없음'));
       line('판정 시각: ' + text(data?.checkedAt));
       return root;
