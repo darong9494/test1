@@ -45,7 +45,47 @@ export function createStudentView() {
       if (deviceStatus !== '정상' || sessionStatus !== '사용 중') line('주의: 현재 기기 또는 세션을 정상 접속으로 확인할 수 없습니다.');
       return root;
     },
-    renderDecision() { return '학생 구현 대기: 서버의 판정과 이유를 연결하세요.'; },
+    renderDecision({ status = 'idle', appId, data, error } = {}) {
+      const root = document.createElement('section');
+      root.setAttribute('aria-label', '업무 앱 접근 판정');
+      const line = (value) => {
+        const p = document.createElement('p');
+        p.textContent = value;
+        root.appendChild(p);
+      };
+      const text = (value, fallback = '확인 불가') => typeof value === 'string' && value.trim() ? value : fallback;
+      // appId는 요청 대상이며, 판정·이유·시각은 검증된 응답 data에서 받습니다.
+      line('업무 앱: ' + text(appId));
+      if (status === 'idle') {
+        line('요청 전: 아직 접근 판정을 요청하지 않았습니다.');
+        return root;
+      }
+      if (status === 'loading') {
+        line('요청 중: 접근 판정을 기다리고 있습니다.');
+        return root;
+      }
+      if (status === 'error') {
+        line('요청 실패: ' + text(error?.message, '서버의 접근 판정을 확인할 수 없습니다.'));
+        line('요청 실패는 접근 거부 판정이 아닙니다.');
+        return root;
+      }
+      if (status !== 'ok') {
+        line('판정 확인 불가: 요청 상태를 확인할 수 없습니다.');
+        return root;
+      }
+      const decisions = {
+        allow: '접근 허용',
+        deny: '접근 거부',
+        challenge: '추가 인증 또는 확인 필요',
+        unknown: '판정 확인 불가',
+      };
+      const code = text(data?.decision, 'unknown');
+      const label = Object.hasOwn(decisions, code) ? decisions[code] : decisions.unknown;
+      line('판정 수신: ' + label + ' (' + code + ')');
+      line('판정 이유: ' + text(data?.reason, '이유 정보 없음'));
+      line('판정 시각: ' + text(data?.checkedAt));
+      return root;
+    },
     renderEvents() { return '학생 구현 대기: 본인 접속·XDR 기록을 연결하세요.'; },
     renderStatus() { return '학생 구현 대기: 기기·세션·알림과 연결 점검 상태를 구분하세요.'; },
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
