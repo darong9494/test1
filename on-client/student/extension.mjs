@@ -6,9 +6,10 @@ export function createStudentView() {
     switch (code) {
       case 'ON_AI_PROVISIONING_PENDING':
       case 'ON_AI_AUTHORIZATION_CHANGED':
-      case 'AI_REQUEST_UNVERIFIED':
       case 'SUBJECT_SCOPE_UNVERIFIED':
         return '권한 준비 중 또는 확인 불가: 담당자에게 계정 연결과 앱 권한 확인을 요청하세요.';
+      case 'AI_REQUEST_UNVERIFIED':
+        return 'AI 연결 또는 응답 확인 불가: 전달된 정보만으로 원인을 구분할 수 없습니다. 연결 상태를 확인하고 잠시 뒤 직접 다시 점검하세요. 계속되면 담당자에게 문의하세요.';
       case 'WB_CLCO_AUTH_REQUIRED':
         return '인증 실패: 계정 연결을 다시 확인하고 담당자에게 확인을 요청하세요.';
       case 'WB_CLCO_ACCESS_BLOCKED':
