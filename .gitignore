@@ -1,0 +1,4 @@
+# Local secret configuration; retain the public configuration template.
+.env
+.env.*
+!.env.example
