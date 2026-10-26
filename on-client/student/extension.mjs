@@ -310,91 +310,7 @@ export function createStudentView() {
       });
       return root;
     },
-    renderVulnerabilities({ status = 'idle', mode, data, error } = {}) {
-      // 입력 계약에는 요청 세대·취소 신호가 없습니다. public/app.js의
-      // loadVulnerabilities가 generation/requestGen을 비교해 오래된 응답을
-      // 버린 뒤에만 이 함수를 호출합니다. 취소·초기화는 각각 error/idle로
-      // 전달되며 여기서는 해당 상태의 새 DOM만 반환합니다.
-      // 조회 중·실패·새 결과 모두 새 요소로 그려 이전 표를 남기지 않습니다.
-      const root = document.createElement('section');
-      root.setAttribute('aria-label', '설치 패키지 취약점 조회');
-      const append = (parent, tag, text) => {
-        const node = document.createElement(tag);
-        if (text !== undefined) node.textContent = String(text);
-        parent.appendChild(node);
-        return node;
-      };
-      const line = (text) => append(root, 'p', text);
-      const present = (value) => value !== undefined && value !== null && value !== '';
-      const field = (label, value) => {
-        if (present(value)) line(`${label}: ${value}`);
-      };
-      if (mode === 'demo') line('예제 자료(demo): 실제 프로젝트 조회 결과가 아닙니다.');
-      if (mode === 'disconnected') line('연결 없음(disconnected): 서버와 연결되지 않았습니다.');
-      if (mode === 'unknown') line('연결 상태 확인 불가(unknown)');
-      if (status === 'idle') {
-        line('조회 전(idle): 아직 설치 패키지 취약점을 조회하지 않았습니다.');
-        return root;
-      }
-      if (status === 'loading') {
-        line('조회 중(loading): 설치 패키지 취약점을 확인하고 있습니다.');
-        return root;
-      }
-      if (status === 'error') {
-        line(`조회 실패(error): ${error?.message ?? '조회 결과를 확인할 수 없습니다.'}`);
-        field('오류 코드', error?.code);
-        line('조회 실패는 취약점이 없다는 뜻이 아닙니다.');
-        line('다시 조회하려면 보호 현황의 「설치 패키지 조회」 버튼을 직접 누르세요. 새 조회 요청을 시작하며 자동으로 재시도하지 않습니다.');
-        return root;
-      }
-      if (status !== 'ok' || !data) {
-        line('조회 상태 확인 불가: 현재 결과를 확인할 수 없습니다.');
-        return root;
-      }
-      const overallStates = {
-        complete: '모두 조회', partial: '일부 조회 실패', not_checked: '아직 조회 안 함',
-        not_configured: '프로젝트 조회 설정 없음', unverifiable: 'lock 파일 확인 불가',
-      };
-      line(`전체 조회 상태: ${overallStates[data.status] ?? '조회 상태 확인 불가'}(${data.status ?? '확인 불가'})`);
-      line('조회 기준: package-lock.json과 설치된 node_modules 메타데이터를 대조한 정확한 패키지 버전입니다.');
-      if (data.status === 'not_configured') line('조회 대상 프로젝트 설정이 필요합니다. 대상 경로와 허용 패키지는 운영자가 준비합니다.');
-      if (data.status === 'not_checked') line('승인된 공개 조회 대상이 없는 등의 이유로 아직 조회하지 않았습니다. 조회 대상은 운영자가 준비합니다.');
-      field('lockfileVersion', data.lockfileVersion);
-      field('lockfileHash', data.lockfileHash);
-      field('전체 조회 시각(checkedAt)', data.checkedAt);
-      if (data.status !== 'complete') line('일부 조회 실패·미조회·설정 없음·확인 불가 상태를 취약점 없음으로 판단하지 마세요.');
-      if (!Array.isArray(data.packages) || !data.packages.length) {
-        line('표시할 패키지 조회 결과가 없습니다.');
-        return root;
-      }
-      const table = append(root, 'table');
-      append(table, 'caption', '설치 패키지별 취약점 조회 결과');
-      const header = append(append(table, 'thead'), 'tr');
-      for (const title of ['패키지 이름', '정확한 설치 버전', '조회 상태', '출처(source)', '조회 시각(checkedAt)', '취약점 ID·수정 시각']) {
-        append(header, 'th', title).setAttribute('scope', 'col');
-      }
-      const body = append(table, 'tbody');
-      const packageStates = { known_vulnerabilities: '알려진 항목 있음', none_found: '조회 범위에서 알려진 항목 없음', unverifiable: '조회 확인 불가' };
-      for (const pkg of data.packages) {
-        const row = append(body, 'tr');
-        if (present(pkg.name)) row.setAttribute('data-student-package-name', pkg.name);
-        if (present(pkg.version)) row.setAttribute('data-student-package-version', pkg.version);
-        append(row, 'td', pkg.name ?? '확인 불가');
-        append(row, 'td', pkg.version ?? '확인 불가');
-        const state = append(row, 'td', `${packageStates[pkg.status] ?? '조회 상태 확인 불가'}(${pkg.status ?? '확인 불가'})`);
-        if (pkg.status === 'none_found') append(state, 'p', '조회 범위에서 알려진 항목이 없다는 뜻이며, 안전을 보장하지 않습니다.');
-        append(row, 'td', pkg.source ?? '확인 불가');
-        append(row, 'td', pkg.checkedAt ?? '확인 불가');
-        const findings = append(row, 'td');
-        const vulnerabilities = Array.isArray(pkg.vulnerabilities) ? pkg.vulnerabilities : [];
-        if (pkg.status === 'unverifiable' && vulnerabilities.length) append(state, 'p', '일부 확인·전체 조회 확인 불가: 이미 받은 취약점 ID를 표시합니다.');
-        if (!vulnerabilities.length) append(findings, 'p', '수신한 취약점 항목 없음');
-        for (const vulnerability of vulnerabilities) {
-          append(findings, 'p', `ID: ${vulnerability.id ?? '확인 불가'} · 수정 시각(modified): ${vulnerability.modified ?? '확인 불가'}`);
-        }
-      }
-      return root;
-    },
+    renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection({ status = 'idle', mode, data, error, checkedAt, explanationAccepted = false } = {}) {
       const root = document.createElement('section');
       root.setAttribute('aria-label', 'AI 연결 점검 결과');
@@ -428,132 +344,18 @@ export function createStudentView() {
         p.textContent = text;
         root.appendChild(p);
       };
-      // 매번 새 요소를 반환하여 이전 요약과 성공 속성을 남기지 않습니다.
-      if (explanation?.status === 'error') {
-        line('요청 실패: AI 설명을 불러오지 못했습니다.');
+      if (explanation?.status === 'ok' && event?.id && typeof explanation.data?.summary === 'string') {
+        root.setAttribute('data-student-explanation-event', event.id);
+        line(`사건 ID: ${event.id}`);
+        line(explanation.data.summary);
+      } else if (explanation?.status === 'error') {
         line(`${explanation.error?.code ?? 'AI_REQUEST_UNVERIFIED'}: ${explanation.error?.message ?? 'AI 설명 응답을 확인할 수 없습니다.'}`);
-        if (explanation.error?.code === 'ON_AI_INVALID_INPUT') line('실패 이유: 설명에 필요한 근거가 부족하거나 현재 기록을 안전하게 확인할 수 없습니다.');
-        if (explanation.error?.code === 'ON_AI_INVALID_OUTPUT') line('실패 이유: 응답 형식이나 근거 ID가 현재 보안 기록과 일치하는지 확인할 수 없습니다.');
         line(aiRecovery(explanation.error?.code));
-        line('기존 보안 기록은 그대로입니다. AI 설명 실패는 과제 실패가 아닙니다.');
-        return root;
-      }
-      if (!event) {
-        line('보안 기록을 먼저 선택하고 AI 설명을 요청하세요.');
-        return root;
-      }
-      if (explanation?.status === 'loading') {
-        line('요청 중: 사건 설명을 불러오는 중입니다. 기존 보안 기록은 그대로입니다.');
-        return root;
-      }
-      if (explanation?.status !== 'ok') {
-        line('요청 전: 아직 확인된 사건 설명이 없습니다. 기존 보안 기록은 그대로입니다.');
-        return root;
-      }
-      const data = explanation.data;
-      if (data?.executed === true) {
-        line('AI 설명 실패: ON_AI_INVALID_OUTPUT: 이미 조치를 실행했다고 답한 설명은 사용할 수 없습니다.');
-        line('기존 보안 기록은 그대로입니다. AI 설명 실패는 과제 실패가 아닙니다.');
-        return root;
-      }
-      const evidence = new Map((Array.isArray(event.evidence) ? event.evidence : []).map((row) => [row.id, row.text]));
-      const validRefs = (refs) => Array.isArray(refs) && refs.length > 0
-        && new Set(refs).size === refs.length && refs.every((id) => evidence.has(id) && typeof evidence.get(id) === 'string');
-      if (!event.id || typeof data?.summary !== 'string' || !data.summary.trim()
-        || !validRefs(data.evidenceIds) || data.evidenceIds.length !== evidence.size
-        || !Array.isArray(data.proposals) || data.executed !== false || data.requiresHumanConfirmation !== true
-        || data.proposals.some((proposal) => !event.supportedActions?.includes(proposal?.action)
-          || typeof proposal?.reason !== 'string' || !validRefs(proposal.evidenceIds))) {
-        line('요청 실패: ON_AI_INVALID_OUTPUT: 설명 형식이나 근거 ID를 현재 보안 기록과 대조할 수 없습니다.');
-        line('근거가 맞지 않거나 응답 계약을 충족하지 않아 이 설명을 사용할 수 없습니다. 없는 근거는 만들지 않습니다.');
-        line('기존 보안 기록은 그대로입니다. AI 설명 실패는 과제 실패가 아닙니다.');
-        return root;
-      }
-      root.setAttribute('data-student-explanation-event', event.id);
-      line('설명 수신 완료: AI 설명(참고용)');
-      line(`사건 ID: ${event.id}`);
-      line(`참고용 AI 요약: ${data.summary}`);
-      line('AI 해석은 참고용입니다. 사실 판단은 아래 근거와 현재 상태를 기준으로 하세요.');
-      line(`설명 시각: ${checkedAt ?? '확인 불가'}`);
-      for (const id of data.evidenceIds) line(`근거 ${id}: ${evidence.get(id)}`);
-      if (!event.rules?.length) line('현재 규칙: 제공된 규칙 없음');
-      for (const rule of event.rules ?? []) line(`규칙 ${rule.id}: ${rule.text}`);
-      line('확인 불가 상태 목록');
-      let unknownCount = 0;
-      for (const [key, label] of [['access', '접속'], ['session', '세션'], ['device', '기기']]) {
-        if (event.state?.[key] === 'unknown') {
-          line(`${label}: 확인 불가(unknown)`);
-          unknownCount += 1;
-        }
-      }
-      if (unknownCount === 0) line('없음');
-      if (!data.proposals.length) {
-        line(!event.supportedActions?.length
-          ? '연동 시스템이 지원하는 조치가 없어 제안이 없습니다(정상).'
-          : 'AI가 이 기록에 맞는 조치를 제안하지 않았습니다. 근거를 보고 담당자와 판단하세요.');
-      }
-      for (const proposal of data.proposals) {
-        line(`조치 제안 ${proposal.action}: ${proposal.reason} — 미실행`);
-        for (const id of proposal.evidenceIds) line(`제안 근거 ${id}: ${evidence.get(id)}`);
-      }
-      line('AI는 아무것도 실행하지 않았습니다. 제안은 사람 확인이 필요하며 실행되지 않았습니다.');
+        line('AI 설명을 불러오지 못했습니다. 기존 보안 기록은 그대로입니다.');
+      } else if (explanation?.status === 'loading') line('사건 설명을 불러오는 중입니다. 기존 보안 기록은 그대로입니다.');
+      else line('아직 확인된 사건 설명이 없습니다. 기존 보안 기록은 그대로입니다.');
       return root;
     },
-    renderAction({ status = 'idle', event, actionId, target, receipt, observation, message, confirmationExpiresAt, error } = {}) {
-      // 이전 결과와 속성을 재사용하지 않고 현재 입력만 표시합니다.
-      const root = document.createElement('section');
-      root.setAttribute('aria-label', '보안 조치 처리 상태');
-      const line = (text) => {
-        const p = document.createElement('p');
-        p.textContent = text;
-        root.appendChild(p);
-      };
-      const labels = {
-        idle: '아직 미실행(idle)',
-        loading: '조치 준비 또는 결과 조회 중(loading) · 결과 확인 전',
-        prepared: '준비됨·미실행(prepared) · 실행하려면 별도의 사람 확인이 필요합니다.',
-        executing: '서버에 전달 중(executing) · 처리 결과는 아직 확인되지 않았습니다.',
-        pending: '서버 접수·처리 중(pending) · 접수 응답(ACK)은 실행 성공이나 효과 확인이 아닙니다.',
-        succeeded: '효과 확인(succeeded)',
-        denied: '연동 시스템에서 조치를 거절했습니다(denied).',
-        failed: '연동 시스템의 조치 처리가 실패했습니다(failed).',
-        unknown: '결과 불명(unknown) · 성공이나 효과 없음으로 판단할 수 없습니다.',
-        expired: '사람 확인 기한 만료(expired) · 조치를 다시 준비하세요.',
-        error: '요청이 처리되지 않았습니다(error).',
-      };
-      const confirmed = status === 'succeeded' && observation?.effectApplied === true;
-      const displayStatus = Object.hasOwn(labels, status) && (status !== 'succeeded' || confirmed) ? status : 'unknown';
-      line(labels[displayStatus]);
-      if (displayStatus === 'unknown') {
-        if (status === 'succeeded') line('수신 상태는 succeeded이지만 effectApplied: true가 없어 효과를 확인할 수 없습니다.');
-        line('제공 화면의 「연동 시스템 결과만 재조회」(현재 제공 화면의 버튼 이름: 「원천 결과만 재조회」)로 결과만 다시 확인하세요.');
-      }
-      const field = (label, value) => {
-        if (value !== undefined && value !== null && value !== '') line(`${label}: ${value}`);
-      };
-      if (event?.id) root.setAttribute('data-student-action-event', event.id);
-      if (receipt?.requestId) root.setAttribute('data-student-action-request', receipt.requestId);
-      field('사건 ID(event.id)', event?.id);
-      for (const evidence of event?.evidence ?? []) field('근거 ID', evidence.id);
-      field('조치 ID(actionId)', actionId);
-      field('실제 대상 ID(target.id)', target?.id);
-      field('대상 세대(target.generation)', target?.generation);
-      field('요청 ID(requestId)', receipt?.requestId);
-      field('영수증 ID(receiptId)', receipt?.receiptId);
-      field('결과 버전(version)', receipt?.version);
-      if (displayStatus === 'prepared') field('사람 확인 기한(confirmationExpiresAt)', confirmationExpiresAt);
-      if (confirmed) {
-        line(`관측 시각(observedAt): ${observation.observedAt ?? '확인 불가'}`);
-        line('effectApplied: true');
-        if (!receipt?.receiptId) line('영수증 ID(receiptId): 확인 불가');
-      }
-      if (['idle', 'loading', 'denied', 'failed', 'error'].includes(displayStatus)) field('안내', message);
-      field('오류 코드', error?.code);
-      field('오류 메시지', error?.message);
-      if (receipt?.superseded === true) line('이전 조회 결과입니다(superseded). 최신 결과를 다시 조회하세요.');
-      if (displayStatus === 'prepared') line('제공 화면에서 대상·조치·확인 기한을 확인하세요. AI 제안만으로 조치가 실행되지 않습니다.');
-      line('「조치 화면 취소」는 표시를 초기화하며, 이미 서버에 전달된 조치 효과를 되돌리지 않습니다.');
-      return root;
-    },
+    renderAction() { return '학생 구현 대기: 현재 사건·조치·실제 대상·사람 확인·ACK와 원천 효과·unknown을 구분하세요.'; },
   };
 }
