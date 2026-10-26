@@ -415,6 +415,61 @@ export function createStudentView() {
       line('AI는 아무것도 실행하지 않았습니다. 제안은 사람 확인이 필요하며 실행되지 않았습니다.');
       return root;
     },
-    renderAction() { return '학생 구현 대기: 현재 사건·조치·실제 대상·사람 확인·ACK와 원천 효과·unknown을 구분하세요.'; },
+    renderAction({ status = 'idle', event, actionId, target, receipt, observation, message, confirmationExpiresAt, error } = {}) {
+      // 이전 결과와 속성을 재사용하지 않고 현재 입력만 표시합니다.
+      const root = document.createElement('section');
+      root.setAttribute('aria-label', '보안 조치 처리 상태');
+      const line = (text) => {
+        const p = document.createElement('p');
+        p.textContent = text;
+        root.appendChild(p);
+      };
+      const labels = {
+        idle: '아직 미실행(idle)',
+        loading: '조치 준비 또는 결과 조회 중(loading) · 결과 확인 전',
+        prepared: '준비됨·미실행(prepared) · 실행하려면 별도의 사람 확인이 필요합니다.',
+        executing: '서버에 전달 중(executing) · 처리 결과는 아직 확인되지 않았습니다.',
+        pending: '서버 접수·처리 중(pending) · 접수 응답(ACK)은 실행 성공이나 효과 확인이 아닙니다.',
+        succeeded: '효과 확인(succeeded)',
+        denied: '연동 시스템에서 조치를 거절했습니다(denied).',
+        failed: '연동 시스템의 조치 처리가 실패했습니다(failed).',
+        unknown: '결과 불명(unknown) · 성공이나 효과 없음으로 판단할 수 없습니다.',
+        expired: '사람 확인 기한 만료(expired) · 조치를 다시 준비하세요.',
+        error: '요청이 처리되지 않았습니다(error).',
+      };
+      const confirmed = status === 'succeeded' && observation?.effectApplied === true;
+      const displayStatus = Object.hasOwn(labels, status) && (status !== 'succeeded' || confirmed) ? status : 'unknown';
+      line(labels[displayStatus]);
+      if (displayStatus === 'unknown') {
+        if (status === 'succeeded') line('수신 상태는 succeeded이지만 effectApplied: true가 없어 효과를 확인할 수 없습니다.');
+        line('제공 화면의 「연동 시스템 결과만 재조회」(현재 제공 화면의 버튼 이름: 「원천 결과만 재조회」)로 결과만 다시 확인하세요.');
+      }
+      const field = (label, value) => {
+        if (value !== undefined && value !== null && value !== '') line(`${label}: ${value}`);
+      };
+      if (event?.id) root.setAttribute('data-student-action-event', event.id);
+      if (receipt?.requestId) root.setAttribute('data-student-action-request', receipt.requestId);
+      field('사건 ID(event.id)', event?.id);
+      for (const evidence of event?.evidence ?? []) field('근거 ID', evidence.id);
+      field('조치 ID(actionId)', actionId);
+      field('실제 대상 ID(target.id)', target?.id);
+      field('대상 세대(target.generation)', target?.generation);
+      field('요청 ID(requestId)', receipt?.requestId);
+      field('영수증 ID(receiptId)', receipt?.receiptId);
+      field('결과 버전(version)', receipt?.version);
+      if (displayStatus === 'prepared') field('사람 확인 기한(confirmationExpiresAt)', confirmationExpiresAt);
+      if (confirmed) {
+        line(`관측 시각(observedAt): ${observation.observedAt ?? '확인 불가'}`);
+        line('effectApplied: true');
+        if (!receipt?.receiptId) line('영수증 ID(receiptId): 확인 불가');
+      }
+      if (['idle', 'loading', 'denied', 'failed', 'error'].includes(displayStatus)) field('안내', message);
+      field('오류 코드', error?.code);
+      field('오류 메시지', error?.message);
+      if (receipt?.superseded === true) line('이전 조회 결과입니다(superseded). 최신 결과를 다시 조회하세요.');
+      if (displayStatus === 'prepared') line('제공 화면에서 대상·조치·확인 기한을 확인하세요. AI 제안만으로 조치가 실행되지 않습니다.');
+      line('「조치 화면 취소」는 표시를 초기화하며, 이미 서버에 전달된 조치 효과를 되돌리지 않습니다.');
+      return root;
+    },
   };
 }
