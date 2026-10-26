@@ -29,7 +29,7 @@
 
 ## 3. 설치·실행·종료
 
-1. Node.js 22~24 를 준비합니다(수업·검사 기준 24.19.0).
+1. package.json에 지정된 Node.js 24.19.0을 준비합니다. 다른 버전의 지원은 확인하지 않았습니다.
 2. 앱 폴더(`on-client`)에서 PowerShell 을 엽니다.
 3. 실행: `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1`
 4. 운영자가 설정 파일을 안내했다면 `-NativeHostConfig "<경로>"`(계정 연결·AI), `-SdpHostConfig "<경로>"`(SDP 연결)를 붙입니다.
