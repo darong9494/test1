@@ -73,6 +73,23 @@ node src/server.mjs
 
 `.env.example`은 비밀 없는 견본입니다. 기본 포트 5189, 엔진 어댑터 경로, AI 모델 이름, 빈 프로젝트 조회 경로와 공개 조회 승인 목록 예시가 있습니다. 파일이 존재한다고 자동 적용되거나 연결이 승인되지는 않습니다. `src/server.mjs`는 프로세스 환경을 읽고 이 진입점에는 `.env` 자동 로드가 없습니다. 대상 경로·허용 패키지·호스트 연결은 운영자가 준비합니다. 비밀값은 담당자가 정한 제출 제외 저장 방식에 보관하고 문서·Git·제출 묶음에 포함하지 않습니다.
 
+실제 `.env`는 문서 판정을 위한 제출물이 아닙니다. 이 프로젝트의 설정 견본은 `on-client/.env.example`이며 키·토큰·비밀번호 없이 함께 읽을 수 있습니다. `.env`라는 이름만으로 Git에서 자동 제외되는 것은 아닙니다. 현재 on-client에는 별도의 `.gitignore`가 없으므로 실제 비밀 파일을 만들거나 추가하지 않습니다. 향후 필요한 비밀값은 담당자가 지정한 제출 제외 파일·보관함에 두고, 실제 제외 여부를 확인해야 합니다. `.env.example`에 실제 값을 채우거나 비밀값을 문서에 붙여 넣지 않습니다.
+
+## 21단계 판정 범위와 근거 위치
+
+서버 AI는 **제출한 동일 커밋**의 README·학생 문서·글로 쓴 구성도·실행 파일·설정 견본을 함께 읽어 설명과 코드의 일치를 판정합니다. 서버가 문서의 명령을 실행해 확인하는 단계가 아닙니다. 아래 표는 근거 위치를 안내하며, 서버의 통과 판정을 대신하지 않습니다. 실행 미확인 표시는 실제 동작의 확인 범위이며 문서나 소스가 없다는 뜻은 아닙니다.
+
+| 항목 | 문서 근거 | 같은 커밋에서 대조할 원문(on-client 기준) |
+|---|---|---|
+| documentation_scope | README 학생 작성 부분, 이 문서의 목적·환경·구성 | README.md, package.json |
+| run_instructions_match_source | 실행·종료·재실행, 실행 도구 충돌 경고 | package.json의 start, src/server.mjs의 시작 코드, tools/start-alekov.ps1 |
+| architecture_matches_source | Mermaid와 텍스트 구성도 | public/app.js, src/server.mjs, student/engine-adapter.mjs, src/engine/sdp-host.mjs, src/ai/service.mjs, vendor/clco-http.mjs |
+| provided_student_boundary | 학생 구현과 제공 코드의 경계 표 | student/extension.mjs, public/, src/, tools/ |
+| failure_guide_matches_source | 오류별 확인 순서 | student/extension.mjs의 상태 분기, public/app.js의 요청·취소, src/server.mjs의 오류 처리 |
+| support_scope_honest | 확인 기록과 기다림(UNV), 설정 견본 | package.json, .env.example, 실제 확인 기록과 각 모듈의 지원 범위 |
+
+제공 안내의 과거 판정 설명과 현재 과제 화면이 다르면 현재 21단계 안내를 기준으로 합니다. 명령 실행 성공·외부 연결·단계 통과를 추측해 기록하지 않습니다.
+
 ## 글로 쓴 구성도
 
 모듈 경로는 on-client 기준입니다. 아래는 연결이 구성된 경우의 코드 경로이며 실제 연결 성공을 뜻하지 않습니다.
