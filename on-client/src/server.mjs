@@ -16,6 +16,8 @@ import {prepareLearnerSupportRequest} from './ai/learner-support-contract.mjs';
 import {createVaultOnAiService} from './ai/vault-service.mjs';
 import {createConnectionManager} from './connection/manager.mjs';
 import {createProjectScanner} from './vulnerabilities/project-scan.mjs';
+import {collectLocalPcStatus} from './local-pc-status.mjs';
+import {collectLocalPcSecurity} from './local-pc-security.mjs';
 import {buildLocalLearnerSupportGuide,isLearnerSupportProblemKind,readLocalLearnerSupportObservation} from './learner-support/service.mjs';
 import {nativeOwn,nativePublicError} from './connection/native-login.mjs';
 import {createNativeHostContext,captureNativeHostConfiguration,readNativeHostConfiguration,openNativeHostOperation,readNativeHostOperation,assertNativeHostOperation,createNativeOperationVault,closeNativeHostOperation} from './connection/native-context.mjs';
@@ -369,6 +371,28 @@ export function createOnServer(serverOptions={}) {
         try{const data=await bounded(signal=>nativeHost.login[kind]({}, {signal}));assertAlive();send(200,{ok:true,data});}
         catch(error){const code=nativePublicError(error);send(code==='NATIVE_HOST_INPUT_INVALID'?400:code==='NATIVE_HOST_EXPIRED'?410:409,{ok:false,error:{code,message:'현재 로그인 연결을 확인하세요. 자동으로 재시도하지 않습니다.',retryable:false}});}
         return;
+      }
+      if(req.method==='GET'&&url.pathname==='/api/local-pc-status'){
+        const data=await bounded(()=>collectLocalPcStatus());
+        send(200,{ok:true,data});return;
+      }
+      if(req.method==='GET'&&url.pathname==='/api/local-pc-security'){
+        const data=await bounded(()=>collectLocalPcSecurity());
+        send(200,{ok:true,data});return;
+      }
+      if(req.method==='GET'&&url.pathname==='/api/sdp-status'){
+        let data={status:'disconnected',label:'SDP 미연결',reason:'실제 SDP 호스트 연결이 구성되지 않았습니다.',checkedAt:clock().toISOString()};
+        if(mode==='demo') data={...data,reason:'예제 모드입니다. PC 조회 성공과 실제 SDP 연결은 별개입니다.'};
+        else if(mode==='connected'){
+          data={status:'unknown',label:'SDP 연결 확인 불가',reason:'연결 어댑터만으로 실제 SDP 호스트를 확인할 수 없습니다.',checkedAt:clock().toISOString()};
+          if(sdpHostEngine){
+            try{
+              assertData('identity',await bounded(signal=>sdpHostEngine.readIdentity({signal})));
+              data={status:'connected',label:'SDP 응답 확인',reason:'구성된 SDP 호스트 경로에서 본인 정보 응답을 확인했습니다. 앱 접근 허용·보안 정상·집행 성공을 보장하지 않습니다.',checkedAt:clock().toISOString()};
+            }catch{assertAlive();data={...data,reason:'구성된 SDP 호스트의 현재 응답을 확인할 수 없습니다.',checkedAt:clock().toISOString()};}
+          }
+        }
+        send(200,{ok:true,data});return;
       }
       if(req.method==='GET'&&files.has(url.pathname)){
         const data=await readFile(resolve(assetsRoot,files.get(url.pathname)));

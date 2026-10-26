@@ -904,7 +904,267 @@ function renderAccess() {
 
 // ---------- 보안 기록 ----------
 
+let securityGeneration = 0;
+let securityController;
+const securityHistory = [];
+const securityDate = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? `${formatTime(value)} · ${value}` : '확인 불가';
+const securityCount = metric => metric?.status === 'ok' && Number.isSafeInteger(metric.value) && metric.value >= 0 && metric.unit === '건';
+
+function securityTable(title, headers, rows) {
+  return el('div', {className:'security-table-wrap'}, el('table', {}, [
+    el('caption', {text:title}),
+    el('thead', {}, el('tr', {}, headers.map(text=>el('th',{scope:'col',text})))),
+    el('tbody', {}, rows.map(row=>el('tr', {}, row.map(text=>el('td',{text}))))),
+  ]));
+}
+
+function setConnectionRow(key, label, note, tone = 'unverified') {
+  $(`connection-${key}-value`).textContent = label;
+  $(`connection-${key}-value`).dataset.state = tone;
+  $(`connection-${key}-note`).textContent = note;
+}
+
+function renderConnectionRecords(data, pendingReason) {
+  const valid = !pendingReason && data?.source === 'local_pc' && data.scope === 'app_server_host' && data.readOnly === true;
+  const network = valid ? data.network : null;
+  if (network?.status === 'ok' && Array.isArray(network.interfaces)) {
+    setConnectionRow('network', `주소 ${network.interfaces.length}개 조회됨`,
+      `조회 시각: ${securityDate(network.measuredAt)} · 유선/무선 종류와 인터넷 연결 여부는 확인 불가`, 'observed');
+  } else {
+    setConnectionRow('network','확인 불가',`${pendingReason ?? network?.reason ?? '네트워크 조회 결과가 없습니다.'} · 조회 시각: 확인 불가`);
+  }
+  const firewall = valid ? data.firewall : null;
+  if (firewall?.status === 'ok' && Array.isArray(firewall.profiles) && firewall.profiles.length) {
+    const active = firewall.profiles.filter(p=>p.enabled === 'enabled').length;
+    const unknown = firewall.profiles.filter(p=>!['enabled','disabled'].includes(p.enabled)).length;
+    setConnectionRow('firewall',`활성 설정 ${active}/${firewall.profiles.length}개 프로필${unknown ? ' · 일부 확인 불가' : ''} · 읽기만 함`,
+      `조회 시각: ${securityDate(firewall.measuredAt)} · 현재 적용 프로필이나 실제 차단 효과를 판정하지 않습니다.`, unknown ? 'unverified' : 'observed');
+  } else {
+    setConnectionRow('firewall','확인 불가 · 읽기만 함',`${pendingReason ?? firewall?.reason ?? '방화벽 조회 결과가 없습니다.'} · 조회 시각: 확인 불가`);
+  }
+  const events = valid ? data.events : null;
+  const totals = {warning:0,error:0};
+  const known = {warning:0,error:0};
+  const stamps = [];
+  const reasons = new Set();
+  for (const log of ['System','Application']) {
+    for (const [key,label] of [['warning','경고'],['error','오류']]) {
+      const metric = events?.[log]?.[key];
+      if (securityCount(metric)) {
+        totals[key]+=metric.value;
+        known[key]++;
+        stamps.push(`${log} ${label}: ${securityDate(metric.measuredAt)}`);
+      } else reasons.add(metric?.reason ?? events?.[log]?.reason ?? pendingReason ?? '유효한 집계 결과가 없습니다.');
+    }
+  }
+  const hasCounts = known.warning + known.error > 0;
+  const countText = (key,label) => known[key] ? `${known[key] < 2 ? '확인된 ' : ''}${label} ${totals[key]}건` : `${label} 확인 불가`;
+  const complete = known.warning === 2 && known.error === 2;
+  const label = hasCounts ? `${countText('warning','경고')} · ${countText('error','오류')}${complete ? '' : ' · 일부만 조회'} · 침해 판정 아님` : '확인 불가 · 침해 판정 아님';
+  const note = [
+    `조회 구간: ${securityDate(events?.windowStart)} ~ ${securityDate(events?.windowEnd)} · 단위: 건`,
+    ...stamps,
+    ...[...reasons].map(reason=>`확인 불가 이유: ${reason}`),
+    !complete ? '일부 조회 결과를 전체 건수로 해석하지 마세요. 읽지 못한 분류는 0건이 아닙니다.' : '',
+  ].filter(Boolean).join(' · ');
+  setConnectionRow('events',label,note,hasCounts ? 'counts' : 'unverified');
+  // SDP 행은 별도 응답을 받는 renderSdpStatus에서만 갱신합니다.
+}
+
+function renderSecurityDetails(data, pendingReason) {
+  renderConnectionRecords(data, pendingReason);
+  const valid = !pendingReason && data?.source === 'local_pc' && data.scope === 'app_server_host' && data.readOnly === true;
+  const unknown = {status:'unverifiable',reason:pendingReason ?? '유효한 PC 조회 응답을 확인할 수 없습니다.'};
+  const net = valid ? data.network ?? unknown : unknown;
+  const firewall = valid ? data.firewall ?? unknown : unknown;
+  const events = valid ? data.events : null;
+  const timeText = metric => metric?.status === 'ok' ? `조회 시각: ${securityDate(metric.measuredAt)}`
+    : `조회 시각: 확인 불가${metric?.attemptedAt ? ` · 시도 ${securityDate(metric.attemptedAt)}` : ''}`;
+  const netOk = net.status === 'ok' && Array.isArray(net.interfaces);
+  $('security-network-summary').textContent = netOk ? `주소 ${net.interfaces.length}개 조회됨` : '확인 불가';
+  $('security-network-time').textContent = timeText(net);
+  setChildren($('security-network-detail'), netOk ? securityTable('로컬 네트워크 인터페이스 주소', ['인터페이스','종류','로컬 주소','CIDR','범위'],
+    net.interfaces.map(row=>[row.name,row.family,row.address,row.cidr ?? '확인 불가',row.internal ? '루프백' : '일반 인터페이스'])) : el('p',{text:`확인 불가 — ${net.reason ?? '주소를 읽지 못했습니다.'}`}),
+    el('p',{className:'muted',text:netOk ? net.description : '읽지 못한 주소를 예시 값으로 대체하지 않습니다.'}));
+  const firewallOk = firewall.status === 'ok' && Array.isArray(firewall.profiles);
+  $('security-firewall-summary').textContent = firewallOk ? '프로필 설정 조회됨' : '확인 불가';
+  $('security-firewall-time').textContent = timeText(firewall);
+  const enabledLabels = {enabled:'활성 설정',disabled:'비활성 설정',unknown:'확인 불가'};
+  setChildren($('security-firewall-detail'), firewallOk ? securityTable('방화벽 프로필별 읽기 결과', ['프로필','설정','조회 시각'],
+    firewall.profiles.map(row=>[row.name,enabledLabels[row.enabled] ?? '확인 불가',securityDate(firewall.measuredAt)])) : el('p',{text:`확인 불가 — ${firewall.reason ?? '방화벽 설정을 읽지 못했습니다.'}`}),
+    el('p',{className:'muted',text:firewallOk ? firewall.description : '설정 변경이나 권한 상승을 시도하지 않습니다.'}));
+  let known = 0;
+  const rows = [];
+  for (const log of ['System','Application']) {
+    for (const [key,label] of [['warning','경고(Level 3)'],['error','오류(Level 2)']]) {
+      const metric = events?.[log]?.[key];
+      const ok = securityCount(metric);
+      if (ok) known++;
+      rows.push([log,label,ok ? String(metric.value) : `확인 불가 — ${metric?.reason ?? events?.[log]?.reason ?? pendingReason ?? '유효한 집계 결과가 없습니다.'}`,
+        '건',ok ? securityDate(metric.measuredAt) : '확인 불가']);
+    }
+  }
+  $('security-events-summary').textContent = known === 4 ? '4개 분류 조회됨' : known ? `${known}/4개 분류 조회 · 일부 확인 불가` : '확인 불가';
+  setChildren($('security-events-detail'),
+    el('p',{text:`조회 대상 구간(최근 24시간): ${securityDate(events?.windowStart)} ~ ${securityDate(events?.windowEnd)}`}),
+    securityTable('Windows 기록별 경고·오류 건수', ['기록','종류','조회 결과','단위','조회 시각'], rows),
+    el('p',{className:'muted',text:events?.description ?? '현재 조회 결과가 없습니다. 실패나 미조회를 0건으로 표시하지 않습니다.'}));
+}
+
+function renderSdpStatus(data, reason) {
+  const labels = {disconnected:'SDP 미연결',connected:'SDP 응답 확인',unknown:'SDP 연결 확인 불가'};
+  const valid = !reason && data && Object.hasOwn(labels,data.status);
+  $('security-sdp-summary').textContent = valid ? labels[data.status] : reason === '확인 중' ? 'SDP 확인 중' : 'SDP 연결 확인 불가';
+  $('security-sdp-time').textContent = `확인 시각: ${valid ? securityDate(data.checkedAt) : '확인 불가'}`;
+  $('security-sdp-detail').textContent = valid ? data.reason : reason ?? '현재 SDP 응답을 확인할 수 없습니다. PC 조회 성공과 무관합니다.';
+  setConnectionRow('sdp',$('security-sdp-summary').textContent,
+    `${$('security-sdp-time').textContent} · ${$('security-sdp-detail').textContent}`,
+    valid && data.status === 'connected' ? 'observed' : 'unverified');
+}
+
+async function loadSecurityDashboard() {
+  const gen = ++securityGeneration;
+  securityController?.abort();
+  const controller = new AbortController();
+  securityController = controller;
+  $('security-refresh').disabled = true;
+  renderSecurityDetails(null,'조회 중입니다. 이전 결과는 현재 결과가 아닙니다.');
+  renderSdpStatus(null,'확인 중');
+  const history = (text) => {
+    securityHistory.unshift(`${formatTime(new Date().toISOString())} · ${text}`);
+    securityHistory.length=Math.min(securityHistory.length,10);
+    setChildren($('security-query-history'),...securityHistory.map(text=>el('li',{text})));
+  };
+  // PC와 SDP는 별도 요청·표시입니다. 하나의 실패가 다른 쪽 성공을 바꾸지 않습니다.
+  try {
+    await Promise.all([
+      request('/api/local-pc-security',{signal:controller.signal}).then(result=>{
+        if (gen !== securityGeneration) return;
+        renderSecurityDetails(result.ok ? result.data : null,result.ok ? undefined : result.error?.message ?? 'PC 조회 요청에 실패했습니다.');
+        history(`PC 읽기 전용 조회 · 네트워크 ${$('security-network-summary').textContent} · 방화벽 ${$('security-firewall-summary').textContent} · Windows 기록 ${$('security-events-summary').textContent}`);
+      }).catch(()=>{
+        if (gen !== securityGeneration) return;
+        renderSecurityDetails(null,'PC 조회 요청을 확인할 수 없습니다.');
+        history('PC 조회 실패 · 0건이나 정상으로 판단하지 않습니다.');
+      }),
+      request('/api/sdp-status',{signal:controller.signal}).then(result=>{
+        if (gen !== securityGeneration) return;
+        renderSdpStatus(result.ok ? result.data : null,result.ok ? undefined : result.error?.message ?? 'SDP 요청에 실패했습니다.');
+        history(`SDP 별도 조회 · ${$('security-sdp-summary').textContent}`);
+      }).catch(()=>{
+        if (gen !== securityGeneration) return;
+        renderSdpStatus(null,'SDP 요청을 확인할 수 없습니다.');
+        history('SDP 연결 확인 불가');
+      }),
+    ]);
+  } finally {
+    if (gen === securityGeneration) {
+      securityController = null;
+      $('security-refresh').disabled = false;
+    }
+  }
+}
+
+let pcStatusGeneration = 0;
+let pcStatusController;
+
+function renderPcStatus(data, pendingReason) {
+  let measured = 0;
+  for (const key of ['cpu', 'memory', 'disk']) {
+    const metric = data?.[key];
+    const unit = key === 'cpu' ? '%' : 'GiB';
+    const valid = !pendingReason && data?.source === 'local_pc' && data?.scope === 'app_server_host'
+      && metric?.status === 'ok' && metric.unit === unit
+      && Number.isFinite(metric.value) && metric.value >= 0
+      && Number.isFinite(metric.percent) && metric.percent >= 0 && metric.percent <= 100
+      && typeof metric.measuredAt === 'string' && Number.isFinite(Date.parse(metric.measuredAt))
+      && (key === 'cpu' || Number.isFinite(metric.total) && metric.total > 0 && metric.value <= metric.total);
+    const bar = $(`pc-${key}-bar`);
+    const body = bar.parentElement;
+    bar.hidden = !valid;
+    bar.value = valid ? metric.percent : 0;
+    $(`pc-${key}-unknown`).hidden = valid;
+    body.dataset.status = valid ? 'ok' : 'unverifiable';
+    if (valid) {
+      measured++;
+      $(`pc-${key}-value`).textContent = key === 'cpu' ? `${metric.value.toFixed(2)} %`
+        : `${metric.value.toFixed(2)} GiB / 전체 ${metric.total.toFixed(2)} GiB (${metric.percent.toFixed(2)} %)`;
+      $(`pc-${key}-time`).textContent = `측정 시각: ${formatTime(metric.measuredAt)} · 원본 ${metric.measuredAt}`;
+      $(`pc-${key}-note`).textContent = metric.description ?? '';
+    } else {
+      $(`pc-${key}-value`).textContent = `확인 불가 — ${pendingReason ?? metric?.reason ?? '유효한 측정값을 받지 못했습니다.'} · 단위: ${unit}`;
+      $(`pc-${key}-time`).textContent = '측정 시각: 확인 불가';
+      $(`pc-${key}-note`).textContent = metric?.attemptedAt ? `조회 시도 시각: ${metric.attemptedAt}` : '';
+    }
+  }
+  const summary = $('feature-pc-state');
+  summary.textContent = pendingReason ? '확인 불가' : measured === 3 ? '실측 조회됨' : measured ? '일부 확인 불가' : '확인 불가';
+  summary.dataset.state = measured === 3 ? 'available' : 'unverified';
+  $('feature-pc-reason').textContent = pendingReason ?? `3개 항목 중 ${measured}개 실측. 항목별 단위·시각·확인 불가 이유는 아래 「내 PC 상태」에서 확인하세요.`;
+}
+
+async function loadPcStatus() {
+  const gen = ++pcStatusGeneration;
+  pcStatusController?.abort();
+  const controller = new AbortController();
+  pcStatusController = controller;
+  $('pc-status-refresh').disabled = true;
+  renderPcStatus(null, '측정 중입니다. 이전 값을 현재 값으로 표시하지 않습니다.');
+  $('feature-pc-state').textContent = '측정 중';
+  try {
+    const result = await request('/api/local-pc-status', { signal: controller.signal });
+    if (gen !== pcStatusGeneration) return;
+    renderPcStatus(result.ok ? result.data : null, result.ok ? undefined : result.error?.message ?? '조회 요청이 실패했습니다.');
+  } catch {
+    if (gen === pcStatusGeneration) renderPcStatus(null, '측정 요청을 확인할 수 없습니다.');
+  } finally {
+    if (gen === pcStatusGeneration) {
+      pcStatusController = null;
+      $('pc-status-refresh').disabled = false;
+    }
+  }
+}
+
+function renderFeatureCheck() {
+  const resource = state.events;
+  const status = $('feature-records-state');
+  const reason = $('feature-records-reason');
+  const time = $('feature-records-time');
+  let label = '확인 불가';
+  let detail = '기록 조회 상태를 확인할 수 없습니다.';
+  let tone = 'unverified';
+  if (resource.status === 'loading') {
+    label = '조회 중';
+    detail = '제공 기록을 조회하고 있습니다. 이전 결과는 현재 결과가 아닙니다.';
+    tone = 'loading';
+  } else if (resource.status === 'error') {
+    label = resource.meta?.mode === 'disconnected' ? '연결 없음' : '조회 실패';
+    detail = resource.error?.message ?? '기록을 읽지 못했습니다. 정상으로 판단하지 마세요.';
+    tone = 'unavailable';
+  } else if (resource.status === 'ok') {
+    if (resource.meta?.mode === 'demo') {
+      label = '예시 기록 표시';
+      detail = '설명용 예시(demo)이며 실제 조회 기록이나 실제 시스템 연결 성공이 아닙니다.';
+    } else if (resource.meta?.mode === 'connected') {
+      label = '기록 조회됨';
+      detail = resource.data?.length ? '현재 사용자 범위의 조회 결과입니다. 「보안 기록」에서 확인하세요.' : '현재 조회 범위에 표시할 기록이 없습니다. 안전을 보장하는 결과는 아닙니다.';
+      tone = 'available';
+    } else {
+      detail = '응답을 받았으나 실제 시스템 연결 여부를 확인할 수 없습니다.';
+    }
+  } else if (resource.status === 'idle') {
+    label = '조회 전';
+    detail = '아직 현재 기록을 조회하지 않았습니다.';
+  }
+  status.textContent = label;
+  status.dataset.state = tone;
+  reason.textContent = detail;
+  // 측정 시각이 아니라 제공 응답의 확인 시각입니다. 로딩 중 이전 시각을 남기지 않습니다.
+  time.textContent = `응답 확인 시각: ${resource.status !== 'loading' && resource.meta?.checkedAt ? resource.meta.checkedAt : '확인 불가'}`;
+}
+
 function renderEvents() {
+  renderFeatureCheck();
   const list = $('records-list');
   const events = state.events;
   explainSlots.clear();
@@ -1330,7 +1590,9 @@ async function loadAll() {
 
 function init() {
   setupNav();
-  $('refresh').addEventListener('click', () => loadAll());
+  $('refresh').addEventListener('click', () => { loadAll(); loadPcStatus(); loadSecurityDashboard(); });
+  $('security-refresh').addEventListener('click', () => loadSecurityDashboard());
+  $('pc-status-refresh').addEventListener('click', () => loadPcStatus());
   $('diag-load').addEventListener('click', () => loadDiagnostics());
   $('diag-copy').addEventListener('click', () => copyDiagnostics());
   $('vulnerabilities-load').addEventListener('click', () => loadVulnerabilities());
@@ -1363,6 +1625,8 @@ function init() {
   renderAllStudent();
   loadStudentModule();
   loadAll();
+  loadPcStatus();
+  loadSecurityDashboard();
 }
 
 init();

@@ -1,6 +1,116 @@
 // 이 파일은 학생이 같은 프로젝트에서 이어서 구현합니다.
 // 제공 UI를 받은 것만으로 단계 완료를 인정하지 않습니다.
-export function createStudentView() {
+export function createStudentView({ api } = {}) {
+  const readPanels = new Map();
+  const isText = value => typeof value === 'string' && value.trim().length > 0;
+  const isTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
+  const unique = rows => new Set(rows.map(row => row?.id)).size === rows.length;
+  const textRows = rows => Array.isArray(rows) && rows.every(row => row && isText(row.id) && isText(row.text));
+  const validDevices = rows => Array.isArray(rows) && unique(rows) && rows.every(row => row && isText(row.id)
+    && isText(row.label) && ['compliant', 'noncompliant', 'unknown'].includes(row.status));
+  const validSessions = rows => Array.isArray(rows) && unique(rows) && rows.every(row => row && isText(row.id)
+    && ['active', 'expired', 'revoked', 'unknown'].includes(row.status));
+  const validEvents = rows => Array.isArray(rows) && unique(rows) && rows.every(row => row && isText(row.id)
+    && ['access', 'xdr'].includes(row.kind) && isTime(row.at) && isText(row.summary)
+    && (row.appId == null || isText(row.appId)) && textRows(row.evidence) && textRows(row.rules)
+    && ['allowed', 'denied', 'unknown'].includes(row.state?.access)
+    && ['active', 'expired', 'revoked', 'unknown'].includes(row.state?.session)
+    && ['compliant', 'noncompliant', 'unknown'].includes(row.state?.device)
+    && Array.isArray(row.supportedActions) && row.supportedActions.every(isText));
+
+  const append = (parent, tag, text) => {
+    const node = document.createElement(tag);
+    if (text !== undefined) node.textContent = String(text);
+    parent.appendChild(node);
+    return node;
+  };
+  const normalizeRead = (result, validate) => {
+    const mode = ['connected', 'demo', 'disconnected', 'unknown'].includes(result?.meta?.mode) ? result.meta.mode : 'unknown';
+    const checkedAt = isTime(result?.meta?.checkedAt) ? result.meta.checkedAt : null;
+    if (result?.ok === true && ['connected', 'demo'].includes(mode) && checkedAt && validate(result.data)) return { status: 'ok', mode, data: result.data, checkedAt };
+    return { status: 'error', mode, checkedAt, error: result?.ok === true
+      ? { code: 'CONTRACT_MISMATCH', message: '조회 응답 형식을 확인할 수 없습니다. 이전 값이나 예시 값으로 대체하지 않습니다.' }
+      : { code: isText(result?.error?.code) ? result.error.code : 'REQUEST_UNVERIFIED',
+        message: isText(result?.error?.message) ? result.error.message : '조회 요청이나 응답을 확인할 수 없습니다.' } };
+  };
+
+  // 학생 API의 허용된 GET만 사용합니다. 로컬 PC API·POST·전역 화면 조작은 하지 않습니다.
+  function readAgainPanel(key, input, definitions, renderBody) {
+    let panel = readPanels.get(key);
+    if (!panel) {
+      const root = document.createElement('section');
+      root.setAttribute('aria-label', key === 'events' ? '내 앱 · 보안 기록 다시 조회' : '내 앱 · 기기·세션 다시 조회');
+      append(root, 'h3', key === 'events' ? '내 앱 · 보안 기록' : '내 앱 · 기기·세션');
+      const button = append(root, 'button', '다시 조회');
+      button.type = 'button';
+      button.setAttribute('aria-label', key === 'events' ? '보안 기록 다시 조회' : '기기·세션 다시 조회');
+      button.setAttribute('aria-controls', `student-reload-${key}-content`);
+      const feedback = append(root, 'p');
+      feedback.setAttribute('role', 'status');
+      feedback.setAttribute('aria-live', 'polite');
+      feedback.setAttribute('aria-atomic', 'true');
+      append(root, 'p', '학생 영역만 다시 조회합니다. 제공 화면·AI 설명 대상을 함께 갱신하려면 상단 「다시 불러오기」를 사용하세요. PC 실측이나 디스크 재조회 기능이 아닙니다.');
+      const body = append(root, 'div');
+      body.id = `student-reload-${key}-content`;
+      const details = append(root, 'div');
+      panel = { root, button, feedback, body, details, sequence: 0, busy: false, resources: null };
+      readPanels.set(key, panel);
+      button.addEventListener('click', async () => {
+        if (panel.busy || panel.sourceBusy || typeof api?.get !== 'function') return;
+        const sequence = ++panel.sequence;
+        panel.busy = true;
+        panel.resources = Object.fromEntries(panel.definitions.map(def => [def.key, { status: 'loading', mode: panel.sources[def.key]?.mode }]));
+        panel.paint();
+        const entries = await Promise.all(panel.definitions.map(async def => {
+          try { return [def.key, normalizeRead(await api.get(def.path), def.validate)]; }
+          catch { return [def.key, { status: 'error', mode: 'unknown', error: { code: 'REQUEST_UNVERIFIED', message: '조회 요청을 확인할 수 없습니다. 서버 실행 상태를 확인하세요.' } }]; }
+        }));
+        if (sequence !== panel.sequence) return;
+        panel.resources = Object.fromEntries(entries);
+        panel.busy = false;
+        panel.paint();
+        // 버튼 노드는 교체하지 않으며 전체 학생 화면을 다시 그리지 않습니다.
+      });
+    }
+    const signature = JSON.stringify(input);
+    if (signature !== panel.signature) {
+      panel.sequence++;
+      panel.signature = signature;
+      panel.resources = null;
+      panel.busy = false;
+    }
+    panel.sources = Object.fromEntries(definitions.map(def => [def.key, def.source(input)]));
+    panel.sourceBusy = Object.values(panel.sources).some(resource => resource?.status === 'loading');
+    panel.definitions = definitions;
+    panel.paint = () => {
+      const current = panel.resources ?? panel.sources;
+      const waiting = panel.busy || !panel.resources && panel.sourceBusy;
+      const available = typeof api?.get === 'function';
+      // aria-disabled와 요청 가드로 중복 실행을 막고 키보드 포커스는 유지합니다.
+      panel.button.setAttribute('aria-disabled', String(waiting || !available));
+      panel.body.setAttribute('aria-busy', String(waiting));
+      panel.details.replaceChildren();
+      const failed = definitions.filter(def => current[def.key]?.status === 'error');
+      panel.feedback.textContent = !available ? '다시 조회 확인 불가: 학생 조회 API가 제공되지 않았습니다. 제공 배포본을 확인하세요.'
+        : waiting ? '새로 읽는 중… 이전 결과는 현재 결과가 아닙니다.'
+          : failed.length ? `조회 실패 항목: ${failed.map(def => def.label).join(', ')}. 아래 이유와 다음 행동을 확인하세요.`
+            : panel.resources ? '조회 응답을 받았습니다. 실제 연결·예제 여부와 각 항목 상태를 확인하세요.' : '필요하면 「다시 조회」를 누르세요.';
+      for (const def of definitions) {
+        const resource = current[def.key];
+        if (resource?.status === 'error') {
+          append(panel.details, 'h4', `${def.label} 조회 실패`);
+          append(panel.details, 'p', `${resource.error?.code ?? 'REQUEST_UNVERIFIED'}: ${resource.error?.message ?? '조회 결과를 확인할 수 없습니다.'}`);
+          append(panel.details, 'p', resource.mode === 'disconnected' || resource.error?.code === 'ENGINE_NOT_CONNECTED'
+            ? '다음 행동: 담당자에게 연결 준비 상태를 확인한 뒤 「다시 조회」를 누르세요. 이 버튼이 SDP 연결을 설정하지는 않습니다.'
+            : '다음 행동: 로컬 앱 실행 상태와 표시된 오류를 확인한 뒤 「다시 조회」를 누르세요. 권한이 필요한 경우 설정을 바꾸거나 관리자 실행을 하지 말고 담당자에게 문의하세요.');
+        }
+        if (resource?.status !== 'loading' && resource?.checkedAt) append(panel.details, 'p', `${def.label} 응답 확인 시각: ${resource.checkedAt} · PC 측정 시각 아님`);
+      }
+      panel.body.replaceChildren(renderBody(current, Boolean(panel.resources)));
+    };
+    panel.paint();
+    return panel.root;
+  }
   // 제공 화면이 안전한 code/message로 변환한 오류만 전달합니다.
   const aiRecovery = (code) => {
     switch (code) {
@@ -128,7 +238,11 @@ export function createStudentView() {
       line('판정 시각: ' + text(data?.checkedAt));
       return root;
     },
-    renderEvents({ status = 'idle', mode, data, error } = {}) {
+    renderEvents(input = {}) {
+      return readAgainPanel('events', input, [
+        { key: 'events', label: '보안 기록', path: '/api/events', source: value => value, validate: validEvents },
+      ], resources => {
+      const { status = 'idle', mode, data, error } = resources.events;
       const root = document.createElement('section');
       root.setAttribute('aria-label', '본인 접속·XDR 기록');
       const append = (parent, tag, value) => {
@@ -225,8 +339,17 @@ export function createStudentView() {
       for (const select of [kind, app, access]) select.addEventListener('change', renderList);
       renderList();
       return root;
+      });
     },
-    renderStatus({ devices, sessions, notifications = [], diagnostics, mode } = {}) {
+    renderStatus(input = {}) {
+      return readAgainPanel('status', input, [
+        { key: 'devices', label: '기기', path: '/api/devices', source: value => value.devices, validate: validDevices },
+        { key: 'sessions', label: '세션', path: '/api/sessions', source: value => value.sessions, validate: validSessions },
+      ], (resources, local) => {
+      const { devices, sessions } = resources;
+      const { notifications = [], diagnostics } = input;
+      const modesReceived = new Set([devices?.mode, sessions?.mode]);
+      const mode = local ? (modesReceived.size === 1 ? devices?.mode : 'unknown') : input.mode;
       const root = document.createElement('section');
       root.setAttribute('aria-label', '기기·세션·알림·진단 상태');
       const append = (parent, tag, text) => {
@@ -235,6 +358,59 @@ export function createStudentView() {
         parent.appendChild(node);
         return node;
       };
+      const demo = append(root, 'section');
+      demo.setAttribute('aria-label', '시연 순서');
+      append(demo, 'h3', '시연 순서');
+      append(demo, 'p', '학생 작성 시연 계획 · 실제 시연 완료 기록이나 예시 측정값이 아닙니다.');
+      const demoSteps = append(demo, 'ol');
+      for (const title of ['내 PC 상태', '연결과 기록', '학생 영역 다시 조회']) {
+        append(append(demoSteps, 'li'), 'strong', title);
+      }
+      const demoFacts = append(demo, 'dl');
+      append(demoFacts, 'dt', '한계');
+      append(demoFacts, 'dd', 'Windows 실제 조회·실제 SDP 연결·브라우저 시연은 미확인입니다. 경고·오류 건수는 침해 판정이 아니며 미조회 항목을 정상으로 바꾸지 않습니다.');
+      append(demoFacts, 'dt', '근거');
+      append(demoFacts, 'dd', '실측·로컬 API 실행 기록 확인 / 실제 브라우저 화면 캡처 미확인 / 패키지 미생성·확인된 패키지 경로 없음');
+      append(demo, 'p', 'PC 실측값의 단위·측정 시각 → PC 조회와 SDP 분리 → 다시 조회의 대기·실패·다음 행동 순서로 보여 주세요. 실제 값은 시연할 때 새로 확인합니다.');
+      append(demo, 'p', '상세 대본: docs/STUDENT_DEMO_GUIDE.md · 기능·근거·한계 정리: docs/STUDENT_DELIVERY_SUMMARY.md. 이 안내는 기능 화면을 자동 이동하거나 포장·설정 변경을 실행하지 않습니다.');
+      const guide = append(root, 'section');
+      guide.setAttribute('aria-label', '실행 안내 한 장');
+      append(guide, 'h3', '실행 안내 한 장');
+      append(guide, 'p', '학생 작성 실행 절차 · PC 측정값이나 오류 발생 기록이 아닙니다.');
+      const steps = append(guide, 'ol');
+      const folderStep = append(steps, 'li');
+      append(folderStep, 'p', '기존 프로젝트의 on-client 폴더를 엽니다. package.json과 src/server.mjs가 있는 위치에서 새 터미널을 여세요. Windows에서는 탐색기 주소 표시줄에 powershell을 입력합니다.');
+      const versionStep = append(steps, 'li');
+      append(versionStep, 'p', 'Node.js 버전을 확인합니다. package.json의 요구 버전은 24.19.0입니다. 이 안내만으로 현재 설치 버전을 확인했다고 판단하지 않습니다.');
+      append(append(versionStep, 'pre'), 'code', 'node --version');
+      append(versionStep, 'p', '명령을 찾을 수 없거나 버전이 다르면 설치·실행 경로를 먼저 확인하세요. 현재 앱에는 외부 npm 의존성이 없어 설치 명령을 임의로 추가하지 않습니다.');
+      const startStep = append(steps, 'li');
+      append(startStep, 'p', '같은 폴더에서 앱을 켜고 첫 화면을 확인합니다. 이미 실행 중이면 중복 실행하지 말고 기존 화면을 새로고침하세요.');
+      append(append(startStep, 'pre'), 'code', 'node src/server.mjs');
+      const open = append(startStep, 'a', '기본 주소 http://127.0.0.1:5189/ 열기');
+      open.href = 'http://127.0.0.1:5189/';
+      append(startStep, 'p', '시작 메시지와 「보호 현황」을 확인하세요. 화면이 열려도 SDP·AI 연결 성공을 뜻하지 않습니다.');
+      append(guide, 'p', '종료: 실행한 터미널에서 Ctrl+C. 재실행: 같은 폴더에서 실행 명령을 다시 입력합니다.');
+      append(guide, 'p', '막혔을 때: 실행한 폴더·명령·첫 오류를 확인하세요. 키·토큰·비밀번호는 공유하지 마세요. 이 화면은 특정 오류가 발생했다고 가정하지 않습니다.');
+      append(guide, 'p', '현재 제공 PowerShell 실행 도구에는 병합 충돌 표시가 남아 있어 위 직접 실행 방법을 안내합니다. 기본 포장 명령(package-app)과 설치형 실행은 아직 미확인·미구현 범위를 학생 설명서에서 확인하세요.');
+      const packaging = append(root, 'section');
+      packaging.setAttribute('aria-label', '포장 명령과 결과');
+      append(packaging, 'h3', '포장 명령과 결과');
+      append(packaging, 'p', '참고 안내 · 실제 실행 결과나 생성 파일 목록이 아닙니다.');
+      append(packaging, 'p', '현재 상태: 이 배포본의 package.json에는 package-app 스크립트가 없습니다. --finish-materials를 지원하는 제공 도구도 확인하지 못했습니다. 아래 명령은 지금 실행하지 마세요.');
+      append(append(packaging, 'pre'), 'code', 'npm run package-app -- --source . --out "내 앱 묶음" --finish-materials');
+      append(packaging, 'p', '제공 도구 준비 후 사용할 참고 명령입니다. 실제 작업 위치·--source·--out 경로는 제공 도구 사용법과 본인 폴더를 확인해 정합니다. 원래 프로젝트와 기존 제출물은 덮어쓰지 않습니다.');
+      const results = append(packaging, 'dl');
+      for (const name of ['finish.commit.raw', 'finish.archive.tar.gz', 'app.zip', 'APP_PACKAGE_MANIFEST.json']) {
+        append(results, 'dt', name);
+        append(results, 'dd', '이번 작업에서 생성하지 않음 · 확인 불가');
+      }
+      append(results, 'dt', 'INSTALL.md · 설치 묶음 폴더');
+      append(results, 'dd', '제공 도구의 출력 계약 확인 필요 · 아직 생성하지 않음');
+      append(results, 'dt', '새 경로 설치 · 바로가기 실행');
+      append(results, 'dd', '미확인 · 설치형 앱에서 이 학생 화면이 반영되는지도 확인 필요');
+      append(packaging, 'p', '다음 행동: 최신 제공 포장 도구와 --finish-materials 지원을 먼저 확인하세요. 그다음 같은 커밋에서 산출물을 함께 만들고 압축을 풀거나 다른 버전의 파일을 섞지 마세요. 설치 프로그램(setup.exe)을 만들었다고 표시하지 않습니다.');
+      append(packaging, 'p', '이 안내는 포장 명령을 자동 실행하지 않습니다. 도구가 없는 상태에서 예시 결과를 성공으로 대신 보여 주지 않습니다.');
       const value = (input) => typeof input === 'string' || typeof input === 'number' ? String(input) : '확인 불가';
       const modes = { demo: '예제 자료: 실제 회사 정보가 아닙니다.', disconnected: '연결 없음: 실제 서버와 연결되지 않았습니다.', unknown: '확인 불가: 연결 상태를 확인할 수 없습니다.' };
       if (modes[mode]) append(root, 'p', modes[mode]);
@@ -271,8 +447,9 @@ export function createStudentView() {
         }
       }
       const notices = append(root, 'section');
-      append(notices, 'h3', '알림');
-      if (!notifications.length) append(notices, 'p', '알림 없음: 주의할 알림이 없습니다.');
+      append(notices, 'h3', '알림 · 제공 화면이 전달한 자료');
+      append(notices, 'p', '알림·진단은 제공 화면의 자료입니다. 이 학생 버튼의 기기·세션 재조회와 별개이며, 함께 갱신하려면 제공 버튼을 사용하세요.');
+      if (!notifications.length) append(notices, 'p', '전달된 알림 없음: 재조회 실패나 미확인 상태를 정상으로 판단하지 마세요.');
       else {
         const list = append(notices, 'ul');
         for (const notice of notifications) append(list, 'li', `resource: ${value(notice.resource)} · code: ${value(notice.code)} · message: ${value(notice.message)}`);
@@ -309,6 +486,7 @@ export function createStudentView() {
         }
       });
       return root;
+      });
     },
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection({ status = 'idle', mode, data, error, checkedAt, explanationAccepted = false } = {}) {
