@@ -311,6 +311,10 @@ export function createStudentView() {
       return root;
     },
     renderVulnerabilities({ status = 'idle', mode, data, error } = {}) {
+      // 입력 계약에는 요청 세대·취소 신호가 없습니다. public/app.js의
+      // loadVulnerabilities가 generation/requestGen을 비교해 오래된 응답을
+      // 버린 뒤에만 이 함수를 호출합니다. 취소·초기화는 각각 error/idle로
+      // 전달되며 여기서는 해당 상태의 새 DOM만 반환합니다.
       // 조회 중·실패·새 결과 모두 새 요소로 그려 이전 표를 남기지 않습니다.
       const root = document.createElement('section');
       root.setAttribute('aria-label', '설치 패키지 취약점 조회');
@@ -340,6 +344,7 @@ export function createStudentView() {
         line(`조회 실패(error): ${error?.message ?? '조회 결과를 확인할 수 없습니다.'}`);
         field('오류 코드', error?.code);
         line('조회 실패는 취약점이 없다는 뜻이 아닙니다.');
+        line('다시 조회하려면 보호 현황의 「설치 패키지 조회」 버튼을 직접 누르세요. 새 조회 요청을 시작하며 자동으로 재시도하지 않습니다.');
         return root;
       }
       if (status !== 'ok' || !data) {
